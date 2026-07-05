@@ -1,10 +1,30 @@
 import React, { useRef, useState } from 'react';
 import { api } from '../api.js';
+import { importFreq, setImportFreq, lastImportText } from '../reminder.js';
 
 export default function DataView({ trades, onChanged, notify }) {
   const csvRef = useRef();
   const jsonRef = useRef();
+  const tvRef = useRef();
   const [busy, setBusy] = useState(false);
+  const [freq, setFreq] = useState(importFreq());
+
+  async function importTradovate(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setBusy(true);
+    try {
+      const res = await api.importTradovate(await file.text());
+      let msg = `Tradovate: ${res.imported} new trade(s) imported`;
+      if (res.duplicates) msg += `, ${res.duplicates} already imported (skipped)`;
+      if (res.open) msg += `, ${res.open} still-open position(s) ignored`;
+      notify(msg);
+      onChanged();
+    } catch (err) { notify('Tradovate import failed: ' + err.message); }
+    finally { setBusy(false); if (tvRef.current) tvRef.current.value = ''; }
+  }
+
+  function changeFreq(v) { setImportFreq(v); setFreq(v); }
 
   async function exportCsv() {
     try { await api.exportCsv(); }
@@ -54,6 +74,24 @@ export default function DataView({ trades, onChanged, notify }) {
         <h3>Export</h3>
         <p className="hint">Download all {trades.length} trade(s) as a spreadsheet-ready CSV file.</p>
         <button className="btn" onClick={exportCsv}>Export CSV</button>
+      </div>
+      <div className="card">
+        <h3>Tradovate import</h3>
+        <p className="hint">
+          In Tradovate: Reports → Fills → pick a date range → Download CSV, then drop the file here.
+          Fills are paired into round-trip trades automatically; anything already imported is skipped,
+          so overlapping date ranges are safe.
+        </p>
+        <input ref={tvRef} type="file" accept=".csv,text/csv" onChange={importTradovate} disabled={busy} />
+        <p className="hint" style={{ marginTop: 10 }}>
+          Remind me to import:{' '}
+          <select value={freq} onChange={(e) => changeFreq(e.target.value)}>
+            <option value="off">Never</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+          </select>
+          {' '}· Last import: {lastImportText()}
+        </p>
       </div>
       <div className="card">
         <h3>Import CSV</h3>

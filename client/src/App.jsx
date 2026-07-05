@@ -7,6 +7,7 @@ import TradeForm from './components/TradeForm.jsx';
 import CalendarView from './components/CalendarView.jsx';
 import AnalysisView from './components/AnalysisView.jsx';
 import DataView from './components/DataView.jsx';
+import { importOverdue } from './reminder.js';
 
 const TABS = [
   ['dashboard', 'Dashboard'],
@@ -81,6 +82,12 @@ export default function App() {
       </header>
 
       <main className="content">
+        {importOverdue() && tab !== 'data' && (
+          <div className="card" style={{ marginBottom: 16 }}>
+            Time to import your latest Tradovate fills — export from Tradovate (Reports → Fills),
+            then use the Tradovate card in the <a href="#" onClick={(e) => { e.preventDefault(); setTab('data'); }}>Data tab</a>.
+          </div>
+        )}
         {error && <div className="card" style={{ borderColor: 'var(--neg)', marginBottom: 16 }}>
           Could not load your data: {error}. This app stores data in your browser (IndexedDB) — private browsing modes may block it.
         </div>}

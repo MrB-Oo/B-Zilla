@@ -1,8 +1,10 @@
 // Browser-only storage layer (IndexedDB). Replaces the old Express API so the
 // app can be hosted as a static site (e.g. GitHub Pages). Same interface as before.
 
+import { parseFills, pairFills, fingerprint } from './tradovate.js';
+
 const DB_NAME = 'tradezilla';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const DEFAULT_POINT_VALUES = { NQ: 20, ES: 50, MNQ: 2, MES: 5 };
 const defaultPointValue = (sym) => DEFAULT_POINT_VALUES[String(sym || '').toUpperCase()] ?? 1;
@@ -17,6 +19,7 @@ function openDb() {
         const db = req.result;
         if (!db.objectStoreNames.contains('trades')) db.createObjectStore('trades', { keyPath: 'id' });
         if (!db.objectStoreNames.contains('shots')) db.createObjectStore('shots', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('fingerprints')) db.createObjectStore('fingerprints', { keyPath: 'id' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -282,6 +285,44 @@ export const api = {
     return { imported: mapped.length };
   },
 
+  // Import a Tradovate Fills/Orders CSV. Pairs fills into round-trip trades and
+  // skips any trade already imported before (fingerprint dedup), so overlapping
+  // date ranges are safe to re-import.
+  async importTradovate(text) {
+    const fills = parseFills(text);
+    const { trades, openCount } = pairFills(fills);
+    const existing = new Set(((await getAll('fingerprints')) || []).map((f) => f.id));
+
+    const now = new Date().toISOString();
+    const fresh = [];
+    for (const t of trades) {
+      const fp = fingerprint(t);
+      if (existing.has(fp)) continue;
+      existing.add(fp);
+      fresh.push({
+        record: {
+          id: crypto.randomUUID(),
+          ...sanitize({ ...t, notes: 'Imported from Tradovate' }),
+          screenshots: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+        fp,
+      });
+    }
+
+    await tx(['trades', 'fingerprints'], 'readwrite', (tr) => {
+      fresh.forEach(({ record, fp }) => {
+        tr.objectStore('trades').put(record);
+        tr.objectStore('fingerprints').put({ id: fp });
+      });
+      return {};
+    });
+
+    try { localStorage.setItem('tzLastTradovateImport', new Date().toISOString()); } catch {}
+    return { imported: fresh.length, duplicates: trades.length - fresh.length, open: openCount };
+  },
+
   async exportCsv() {
     const trades = await api.listTrades();
     const lines = [CSV_COLUMNS.join(',')];
@@ -297,7 +338,8 @@ export const api = {
     for (const s of shots) {
       screenshots.push({ id: s.id, dataUrl: await blobToDataUrl(s.blob) });
     }
-    const payload = { version: 2, exportedAt: new Date().toISOString(), trades, screenshots };
+    const fingerprints = ((await getAll('fingerprints')) || []).map((f) => f.id);
+    const payload = { version: 2, exportedAt: new Date().toISOString(), trades, screenshots, fingerprints };
     const stamp = new Date().toISOString().slice(0, 10);
     downloadBlob(
       new Blob([JSON.stringify(payload)], { type: 'application/json' }),
@@ -329,11 +371,14 @@ export const api = {
       updatedAt: now,
     }));
 
-    await tx(['trades', 'shots'], 'readwrite', (tr) => {
+    const fingerprints = (!Array.isArray(data) && Array.isArray(data.fingerprints)) ? data.fingerprints : [];
+    await tx(['trades', 'shots', 'fingerprints'], 'readwrite', (tr) => {
       tr.objectStore('trades').clear();
       tr.objectStore('shots').clear();
+      tr.objectStore('fingerprints').clear();
       cleaned.forEach((t) => tr.objectStore('trades').put(t));
       shotBlobs.forEach((s) => tr.objectStore('shots').put(s));
+      fingerprints.forEach((id) => tr.objectStore('fingerprints').put({ id }));
       return {};
     });
     return { restored: cleaned.length };

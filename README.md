@@ -53,6 +53,10 @@ Your site will be at `https://<username>.github.io/<repo>/`.
 - Filters by symbol, date range, setup, session and direction.
 - CSV export and import, plus full JSON backup and restore (backups include
   screenshot images).
+- Tradovate import: export Reports → Fills as CSV from Tradovate and drop it on
+  the Data tab. Fills are paired into round-trip trades (weighted average prices,
+  summed commissions); already-imported trades are skipped automatically, and an
+  optional daily/weekly reminder nudges you when an import is due.
 
 ## Point values
 
