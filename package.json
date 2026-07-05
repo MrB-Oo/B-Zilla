@@ -1,0 +1,12 @@
+{
+  "name": "tradezilla-journal",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Trading journal for NQ/ES futures (static React app, data stored in the browser via IndexedDB).",
+  "scripts": {
+    "setup": "npm --prefix client install",
+    "dev": "npm --prefix client run dev",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix client run preview"
+  }
+}

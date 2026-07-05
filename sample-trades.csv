@@ -1,0 +1,5 @@
+date,time,symbol,direction,entry,exit,contracts,stopLoss,takeProfit,commissions,setup,session,notes
+2026-06-30,09:40,NQ,long,20000,20055,2,19975,20060,4.2,ORB,NY,Opening range breakout
+2026-06-30,10:15,NQ,short,20080,20095,1,20060,20020,2.1,Fade,NY,Faded the high, stopped
+2026-07-01,15:05,ES,short,5600,5585,2,5608,5580,5,Reversal,NY,Clean reversal at PDH
+2026-07-02,03:20,NQ,long,20200,20180,1,20185,20260,2.1,Trend,London,Trend pullback failed
