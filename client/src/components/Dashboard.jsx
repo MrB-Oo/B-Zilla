@@ -1,6 +1,6 @@
 import React from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
-import { computeStats, equitySeries, fmtUSD, fmtNum, pnlClass } from '../helpers.js';
+import { computeStats, equitySeries, riskStats, fmtUSD, fmtNum, pnlClass } from '../helpers.js';
 
 function Stat({ label, value, sub, cls }) {
   return (
@@ -15,6 +15,7 @@ function Stat({ label, value, sub, cls }) {
 export default function Dashboard({ trades }) {
   const s = computeStats(trades);
   const eq = equitySeries(trades);
+  const rk = riskStats(trades);
   const pf = s.profitFactor === Infinity ? '∞' : fmtNum(s.profitFactor, 2);
 
   if (!trades.length) {
@@ -32,6 +33,11 @@ export default function Dashboard({ trades }) {
         <Stat label="Avg loss" value={fmtUSD(s.avgLoss)} cls="neg" />
         <Stat label="Largest win" value={fmtUSD(s.largestWin)} cls="pos" />
         <Stat label="Largest loss" value={fmtUSD(s.largestLoss)} cls="neg" />
+        <Stat label="Max drawdown" value={fmtUSD(-rk.maxDrawdown)} cls={rk.maxDrawdown > 0 ? 'neg' : ''} sub="peak to trough" />
+        <Stat label="Win streak" value={rk.maxWinStreak} cls={rk.maxWinStreak > 0 ? 'pos' : ''} sub={rk.currentWinStreak > 0 ? `current: ${rk.currentWinStreak}` : 'longest'} />
+        <Stat label="Loss streak" value={rk.maxLossStreak} cls={rk.maxLossStreak > 0 ? 'neg' : ''} sub={rk.currentLossStreak > 0 ? `current: ${rk.currentLossStreak}` : 'longest'} />
+        <Stat label="Best day" value={rk.bestDay ? fmtUSD(rk.bestDay.pnl) : '-'} cls={pnlClass(rk.bestDay?.pnl)} sub={rk.bestDay?.date} />
+        <Stat label="Worst day" value={rk.worstDay ? fmtUSD(rk.worstDay.pnl) : '-'} cls={pnlClass(rk.worstDay?.pnl)} sub={rk.worstDay?.date} />
       </div>
 
       <div className="section-title">Equity curve</div>

@@ -35,17 +35,95 @@ export function computeStats(trades) {
   };
 }
 
-// Build equity curve points ordered chronologically (oldest -> newest).
-export function equitySeries(trades) {
-  const closed = trades
+// Closed trades ordered chronologically (oldest -> newest).
+function closedChrono(trades) {
+  return trades
     .filter((t) => t.resultDollars != null)
     .slice()
     .sort((a, b) => ((a.date || '') + (a.time || '')).localeCompare((b.date || '') + (b.time || '')));
+}
+
+// Build equity curve points ordered chronologically (oldest -> newest).
+export function equitySeries(trades) {
   let cum = 0;
-  return closed.map((t, i) => {
+  return closedChrono(trades).map((t, i) => {
     cum += t.resultDollars;
     return { i: i + 1, equity: +cum.toFixed(2), label: t.date || '', pnl: t.resultDollars };
   });
+}
+
+// Order-sensitive stats: max drawdown, win/loss streaks, best and worst day.
+export function riskStats(trades) {
+  const closed = closedChrono(trades);
+  let equity = 0, peak = 0, maxDrawdown = 0;
+  let winStreak = 0, lossStreak = 0, maxWinStreak = 0, maxLossStreak = 0;
+  const byDay = {};
+  for (const t of closed) {
+    equity += t.resultDollars;
+    if (equity > peak) peak = equity;
+    if (peak - equity > maxDrawdown) maxDrawdown = peak - equity;
+    if (t.resultDollars > 0) { winStreak++; lossStreak = 0; }
+    else if (t.resultDollars < 0) { lossStreak++; winStreak = 0; }
+    else { winStreak = 0; lossStreak = 0; }
+    if (winStreak > maxWinStreak) maxWinStreak = winStreak;
+    if (lossStreak > maxLossStreak) maxLossStreak = lossStreak;
+    const d = t.date || 'Unknown';
+    byDay[d] = +((byDay[d] || 0) + t.resultDollars).toFixed(2);
+  }
+  let bestDay = null, worstDay = null;
+  for (const [date, pnl] of Object.entries(byDay)) {
+    if (!bestDay || pnl > bestDay.pnl) bestDay = { date, pnl };
+    if (!worstDay || pnl < worstDay.pnl) worstDay = { date, pnl };
+  }
+  return {
+    maxDrawdown: +maxDrawdown.toFixed(2),
+    maxWinStreak, maxLossStreak,
+    currentWinStreak: winStreak, currentLossStreak: lossStreak,
+    bestDay, worstDay,
+  };
+}
+
+// "HH:MM" -> "09:00–10:00" bucket, or null when the trade has no time.
+export function hourBucket(time) {
+  const m = /^(\d{1,2}):/.exec(String(time || '').trim());
+  if (!m) return null;
+  const h = parseInt(m[1], 10);
+  if (h < 0 || h > 23) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(h)}:00–${pad((h + 1) % 24)}:00`;
+}
+
+export const WEEKDAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const WEEKDAY_BY_INDEX = ['Sunday', ...WEEKDAY_ORDER.slice(0, 6)];
+
+// "YYYY-MM-DD" -> weekday name, or null when the date is missing/invalid.
+export function weekdayName(date) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(date || ''));
+  if (!m) return null;
+  return WEEKDAY_BY_INDEX[new Date(+m[1], +m[2] - 1, +m[3]).getDay()];
+}
+
+// Bucket R-multiples into fixed-width bins for the distribution chart.
+// Outliers beyond ±clampR land in the outermost bins.
+export function rHistogram(trades, step = 0.5, clampR = 5) {
+  const rs = trades.filter((t) => t.rMultiple != null).map((t) => t.rMultiple);
+  if (!rs.length) return [];
+  const maxIdx = Math.round(clampR / step);
+  const counts = new Map();
+  for (const r of rs) {
+    const idx = Math.min(maxIdx - 1, Math.max(-maxIdx, Math.floor(r / step)));
+    counts.set(idx, (counts.get(idx) || 0) + 1);
+  }
+  const idxs = [...counts.keys()];
+  const lo = Math.min(...idxs), hi = Math.max(...idxs);
+  const fmtEdge = (v) => (v > 0 ? '+' : '') + (Number.isInteger(v) ? v : v.toFixed(1)) + 'R';
+  const bins = [];
+  for (let i = lo; i <= hi; i++) {
+    const from = +(i * step).toFixed(2), to = +((i + 1) * step).toFixed(2);
+    const range = i === -maxIdx ? `≤ ${fmtEdge(to)}` : i === maxIdx - 1 ? `≥ ${fmtEdge(from)}` : `${fmtEdge(from)} to ${fmtEdge(to)}`;
+    bins.push({ label: fmtEdge(from), from, to, range, count: counts.get(i) || 0 });
+  }
+  return bins;
 }
 
 // Group by a key, returning per-group stats.
