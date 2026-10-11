@@ -244,6 +244,10 @@ if barstate.islast
         if showOrg and not na(orgR)
             f_drawList(orgR, orgA, 0, int(orgR.size() / 3), orgBase, italLbl ? "𝘖𝘙𝘎" : "ORG", 0)
 
+// The compiler doesn't count drawings created inside nested function calls
+// as the indicator's output, so declare an invisible plot to satisfy it.
+plot(na, "", display = display.none, editable = false)
+
 // ═══════════════════════════ Guard warning ═══════════════════════════
 var table warnT = na
 if barstate.islast
