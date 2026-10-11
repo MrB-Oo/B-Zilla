@@ -1,0 +1,257 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+// NDOG & NWOG by MrB  —  CME index futures (NQ / ES)
+//
+//   • NDOG – New Day Opening Gap: the gap between the 17:00 ET daily close
+//     and the 18:00 ET reopen. Only the current week's NDOGs are shown; they
+//     extend right until Friday's close and the whole set is wiped when the
+//     new week opens Sunday 18:00. Labeled by the trading day they open
+//     into ("NDOG · 1 Sep").
+//   • NWOG – New Week Opening Gap: Friday 17:00 close ↔ Sunday 18:00 open,
+//     kept for the last N weeks (default 4 ≈ one month). The Sunday open is
+//     ONLY ever a NWOG — never double-counted as an NDOG.
+//   • ORG – Opening Range Gap (RTH gap): the 16:14 close of the prior RTH
+//     session (the 16:14 one-minute bar, i.e. the last print before 16:15)
+//     ↔ the 09:30 ET open. Kept for the last N days (default 1 = today).
+//   • Each gap draws bordered top/bottom lines with a soft fill, an optional
+//     consequent encroachment (CE) midline, and a riding label.
+//   • Works on ETH *and* RTH charts: every gap is read from ETH data with
+//     request.security, whatever session the chart is set to. NDOG/NWOG are
+//     read from 60-minute bars and ORG from 5-minute bars. Those bars share
+//     their boundaries with the 1-minute bars (the 16:00 hourly bar closes on
+//     the 16:59 one-minute close, the 18:00 hourly bar opens on the 18:00
+//     one-minute open, the 16:10 five-minute bar closes on the 16:14
+//     one-minute close), so the levels are tick-exact on a 1-minute chart
+//     while still reaching weeks of history the 1-minute chart hasn't loaded.
+//   • Detection keys off the exchange session (timeframe.change), so the
+//     18:00 reopen and Sunday open are located by the data itself; times are
+//     America/New_York and survive DST changes. No repainting: gaps form
+//     from the confirmed prior close and the fixed session open, both of
+//     which are known the moment the session opens.
+//   • Contract rollovers: on a continuous symbol (NQ1!, MNQ1!) without
+//     back-adjustment, the roll-day open differs from the prior close by the
+//     spread between the two contracts, which is not a real gap. With the
+//     rollover correction on, the gap size is taken from back-adjusted data
+//     and drawn from the chart's own opening price, so only the true gap
+//     remains.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("NDOG & NWOG by MrB", "NDOG/NWOG", overlay = true,
+     max_lines_count = 150, max_labels_count = 150)
+
+// ═══════════════════════════ Settings ═══════════════════════════
+GRP_G = "Gaps"
+bool showNdog = input.bool(true, "NDOG — daily gaps (current week)", group = GRP_G)
+bool showNwog = input.bool(true, "NWOG — weekly gaps",               group = GRP_G)
+int  nwogKeep = input.int(4, "NWOG weeks kept", minval = 1, maxval = 12, group = GRP_G,
+     tooltip = "4 ≈ one month of weekly gaps")
+bool showOrg  = input.bool(true, "ORG — RTH opening range gap (16:14 close → 09:30 open)", group = GRP_G)
+int  orgKeep  = input.int(1, "ORG days kept", minval = 1, maxval = 5, group = GRP_G,
+     tooltip = "1 = today's ORG only")
+bool showCE   = input.bool(true, "Consequent encroachment (CE) line", group = GRP_G)
+bool fixRoll  = input.bool(true, "Correct gaps across contract rollovers", group = GRP_G,
+     tooltip = "On continuous symbols (NQ1!, MNQ1!) the roll-day open is offset from the prior close by the spread between contracts. When ticked, that spread is removed so only the real gap is drawn. Has no effect on single-contract symbols or back-adjusted charts.")
+
+GRP_S = "Style"
+bool  useCust = input.bool(false, "Custom colors", group = GRP_S, inline = "cc")
+color cNdogIn = input.color(#7A93B8, "", group = GRP_S, inline = "cc")
+color cNwogIn = input.color(#9C89C0, "", group = GRP_S, inline = "cc")
+color cOrgIn  = input.color(#B8955A, "", group = GRP_S, inline = "cc",
+     tooltip = "NDOG | NWOG | ORG. Untick to auto-pick for light or dark chart backgrounds.")
+string bStyle = input.string("Solid", "Borders", options = ["Solid", "Dashed", "Dotted"], group = GRP_S, inline = "bs")
+int    bWidth = input.int(1, "", minval = 1, maxval = 4, group = GRP_S, inline = "bs")
+int    lnTr   = input.int(45, "Border transparency", minval = 0, maxval = 100, group = GRP_S)
+int    flTr   = input.int(95, "Fill transparency",   minval = 0, maxval = 100, group = GRP_S)
+bool   showLbl   = input.bool(true, "Labels", group = GRP_S, inline = "lb")
+string lblSizeIn = input.string("Normal", "", options = ["Tiny", "Small", "Normal"], group = GRP_S, inline = "lb")
+string lblPosIn  = input.string("Right", "", options = ["Middle", "Right"], group = GRP_S, inline = "lb",
+     tooltip = "Right = label at the gap's right end. Middle = centered on the gap.")
+bool   italLbl = input.bool(true, "Italic labels", group = GRP_S,
+     tooltip = "Pine has no native italics — uses Unicode italic glyphs.")
+
+// ═══════════════════════════ Helpers ═══════════════════════════
+string NY   = "America/New_York"
+int    MS6H = 21600000  // the CME trading date rolls at 18:00 ET, 6 h before midnight
+
+f_style(string s) =>
+    s == "Solid" ? line.style_solid : s == "Dashed" ? line.style_dashed : line.style_dotted
+
+f_size(string s) =>
+    s == "Tiny" ? size.tiny : s == "Small" ? size.small : size.normal
+
+lblStyle() =>
+    lblPosIn == "Right" ? label.style_label_left : label.style_none
+
+f_lum(color c) =>
+    0.299 * color.r(c) + 0.587 * color.g(c) + 0.114 * color.b(c)
+
+bool darkBg = f_lum(chart.bg_color) < 128
+// Dark-side defaults are tuned for near-black canvases: bright enough to
+// survive the border transparency, distinct from the FPFVG azure (#58A6FF).
+color ndogBase = useCust ? cNdogIn : darkBg ? #86AEDC : #4C6E94
+color nwogBase = useCust ? cNwogIn : darkBg ? #B39DE0 : #71589E
+color orgBase  = useCust ? cOrgIn  : darkBg ? #D9B77A : #8E6C30
+
+var int firstBarT = na
+if barstate.isfirst
+    firstBarT := time
+
+// ═══════════════════════════ Gap scans (run on ETH data) ═══════════════════════════
+// Called inside request.security, so they see the scan timeframe's full
+// history rather than only the bars loaded on the chart. Each keeps a running
+// list, oldest → newest, three values per gap: open time, prior close, open.
+
+// NDOG/NWOG. Returns [number of NWOGs, NWOG values..., NDOG values...].
+f_scan(int keepW) =>
+    var array<float> nw = array.new<float>()
+    var array<float> nd = array.new<float>()
+    bool  newW = timeframe.change("W")
+    bool  newD = timeframe.change("D")
+    float pc   = close[1]
+    if not na(pc)
+        if newW
+            // Week rollover: last week's NDOGs expire. The Sunday 18:00 open
+            // is the NWOG — never an NDOG.
+            nd.clear()
+            nw.push(float(time))
+            nw.push(pc)
+            nw.push(open)
+            while nw.size() > keepW * 3
+                nw.shift()
+        else if newD
+            nd.push(float(time))
+            nd.push(pc)
+            nd.push(open)
+    array<float> out = array.new<float>()
+    out.push(float(nw.size()) / 3)
+    out.concat(nw)
+    out.concat(nd)
+    out
+
+// ORG: last RTH close before 16:15 ET → 09:30 ET open. Early-close days
+// (13:00 / 13:15) simply carry their last RTH print as the close.
+f_orgScan(int keepD) =>
+    var array<float> og = array.new<float>()
+    var float rthC = na
+    int  m     = hour(time, NY) * 60 + minute(time, NY)
+    bool inRth = m >= 570 and m < 975   // 09:30 – 16:15 ET
+    bool rthOpen = inRth and (not inRth[1] or time - time[1] > MS6H)
+    if rthOpen and not na(rthC)
+        og.push(float(time))
+        og.push(rthC)
+        og.push(open)
+        while og.size() > keepD * 3
+            og.shift()
+    if inRth
+        rthC := close
+    og.copy()
+
+string ethTk = ticker.modify(syminfo.tickerid, session = session.extended)
+string adjTk = fixRoll ? ticker.modify(syminfo.tickerid, session = session.extended, backadjustment = backadjustment.on) : ethTk
+
+// lookahead_on is safe here: every value used (session open, its time, and
+// the previous bar's close) is fixed the instant the scan bar opens.
+array<float> raw  = request.security(ethTk, "60", f_scan(nwogKeep),   lookahead = barmerge.lookahead_on)
+array<float> adj  = request.security(adjTk, "60", f_scan(nwogKeep),   lookahead = barmerge.lookahead_on)
+array<float> orgR = request.security(ethTk, "5",  f_orgScan(orgKeep), lookahead = barmerge.lookahead_on)
+array<float> orgA = request.security(adjTk, "5",  f_orgScan(orgKeep), lookahead = barmerge.lookahead_on)
+
+// ═══════════════════════════ Drawing ═══════════════════════════
+type Gap
+    line     top
+    line     btm
+    line     ce
+    linefill fl
+    label    lbl
+    label    l1    // small "1" on the top line
+    label    l0    // small "0" on the bottom line
+
+var array<Gap> gaps = array.new<Gap>()
+
+f_gapNew(color base, string txt, int born, float a, float b) =>
+    float hi  = math.max(a, b)
+    float lo  = math.min(a, b)
+    float mid = math.avg(hi, lo)
+    // A gap can be older than the first bar loaded on the chart — start its
+    // lines at the first loaded bar in that case.
+    int   x1  = math.max(born, firstBarT)
+    // Extend to the bar's close time — extending only to its open time would
+    // leave a just-formed gap zero-width (invisible) for its whole first bar.
+    int   x2  = time_close
+    int   lx  = lblPosIn == "Right" ? x2 : int((x1 + x2) / 2)
+    color lc  = color.new(base, lnTr)
+    color tc  = color.new(base, math.max(lnTr - 20, 0))
+    line  tl  = line.new(x1, hi, x2, hi, xloc.bar_time, extend.none, lc, f_style(bStyle), bWidth)
+    line  bl  = line.new(x1, lo, x2, lo, xloc.bar_time, extend.none, lc, f_style(bStyle), bWidth)
+    line  cl  = showCE ? line.new(x1, mid, x2, mid, xloc.bar_time, extend.none, lc, line.style_dotted, 1) : line(na)
+    linefill fl = linefill.new(tl, bl, color.new(base, flTr))
+    label lb = showLbl ? label.new(lx, mid, txt, xloc.bar_time, yloc.price, color(na), lblStyle(), tc, f_size(lblSizeIn)) : label(na)
+    // Quadrant markers: top = 1, bottom = 0 (the CE midline is 0.5).
+    label m1 = showLbl ? label.new(lx, hi, "1", xloc.bar_time, yloc.price, color(na), lblStyle(), tc, size.tiny) : label(na)
+    label m0 = showLbl ? label.new(lx, lo, "0", xloc.bar_time, yloc.price, color(na), lblStyle(), tc, size.tiny) : label(na)
+    Gap.new(tl, bl, cl, fl, lb, m1, m0)
+
+f_gapDel(Gap g) =>
+    line.delete(g.top)
+    line.delete(g.btm)
+    if not na(g.ce)
+        line.delete(g.ce)
+    linefill.delete(g.fl)
+    if not na(g.lbl)
+        label.delete(g.lbl)
+    if not na(g.l1)
+        label.delete(g.l1)
+    if not na(g.l0)
+        label.delete(g.l0)
+
+// Draws `cnt` gaps from list `r`, starting at index `from`. When the
+// back-adjusted list `a` has the same layout and the same open time for a
+// gap, its true size is taken from `a` and anchored to the chart's own open.
+f_drawList(array<float> r, array<float> a, int from, int cnt, color base, string nm, int dtShift) =>
+    bool aligned = not na(a)
+    if aligned
+        aligned := a.size() == r.size()
+    if cnt > 0
+        for i = 0 to cnt - 1
+            int   k  = from + i * 3
+            int   t0 = int(r.get(k))
+            float pc = r.get(k + 1)
+            float o  = r.get(k + 2)
+            if aligned
+                if a.get(k) == r.get(k)
+                    pc := math.round_to_mintick(o - (a.get(k + 2) - a.get(k + 1)))
+            if pc != o
+                string dt = str.format_time(t0 + dtShift, "d MMM", NY)
+                gaps.push(f_gapNew(base, nm + " · " + dt, t0, pc, o))
+
+bool tfOk = timeframe.isintraday or timeframe.isdaily
+
+// The scans already hold exactly the gaps that should be visible (current
+// week's NDOGs, last N NWOGs, last N ORGs), so the latest bar simply redraws
+// that set, extended to the current bar.
+if barstate.islast
+    for g in gaps
+        f_gapDel(g)
+    gaps.clear()
+    if tfOk
+        if not na(raw)
+            if raw.size() > 1
+                int nW    = int(raw.get(0))
+                int total = int((raw.size() - 1) / 3)
+                if showNwog
+                    f_drawList(raw, adj, 1, nW, nwogBase, italLbl ? "𝘕𝘞𝘖𝘎" : "NWOG", MS6H)
+                if showNdog
+                    f_drawList(raw, adj, 1 + nW * 3, total - nW, ndogBase, italLbl ? "𝘕𝘋𝘖𝘎" : "NDOG", MS6H)
+        if showOrg and not na(orgR)
+            f_drawList(orgR, orgA, 0, int(orgR.size() / 3), orgBase, italLbl ? "𝘖𝘙𝘎" : "ORG", 0)
+
+// ═══════════════════════════ Guard warning ═══════════════════════════
+var table warnT = na
+if barstate.islast
+    if not na(warnT)
+        table.delete(warnT)
+        warnT := na
+    if not tfOk
+        warnT := table.new(position.top_center, 1, 1)
+        table.cell(warnT, 0, 0, "NDOG/NWOG needs an intraday or daily timeframe",
+         text_color = chart.fg_color, text_size = size.small,
+         bgcolor = color.new(color.orange, 80))
