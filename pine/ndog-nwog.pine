@@ -260,8 +260,8 @@ if barstate.islast
             string dt  = str.format_time(t0 + (kind == 2 ? 0 : MS6H), "d MMM", NY)
             gaps.push(f_gapNew(base, nm + " · " + dt, t0, todo.get(i * 4 + 1), todo.get(i * 4 + 2)))
 
-// Draws nothing (na), but gives the indicator a plot so it always compiles.
-plot(na, "NDOG/NWOG", color = color(na), editable = false)
+// Invisible plot of close: gives the indicator a plot the compiler counts.
+plot(close, "NDOG/NWOG", color(na), editable = false)
 
 // ═══════════════════════════ Guard warning ═══════════════════════════
 var table warnT = na
