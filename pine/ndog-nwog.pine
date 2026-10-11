@@ -203,25 +203,30 @@ f_gapDel(Gap g) =>
     if not na(g.l0)
         label.delete(g.l0)
 
-// Draws `cnt` gaps from list `r`, starting at index `from`. When the
+// Gaps to draw this bar, filled by f_collect: open time, prior close, open
+// and kind (0 = NWOG, 1 = NDOG, 2 = ORG) for each.
+var array<float> todo = array.new<float>()
+
+// Queues `cnt` gaps from list `r`, starting at index `from`. When the
 // back-adjusted list `a` has the same layout and the same open time for a
 // gap, its true size is taken from `a` and anchored to the chart's own open.
-f_drawList(array<float> r, array<float> a, int from, int cnt, color base, string nm, int dtShift) =>
+f_collect(array<float> r, array<float> a, int from, int cnt, int kind) =>
     bool aligned = not na(a)
     if aligned
         aligned := a.size() == r.size()
     if cnt > 0
         for i = 0 to cnt - 1
             int   k  = from + i * 3
-            int   t0 = int(r.get(k))
             float pc = r.get(k + 1)
             float o  = r.get(k + 2)
             if aligned
                 if a.get(k) == r.get(k)
                     pc := math.round_to_mintick(o - (a.get(k + 2) - a.get(k + 1)))
             if pc != o
-                string dt = str.format_time(t0 + dtShift, "d MMM", NY)
-                gaps.push(f_gapNew(base, nm + " · " + dt, t0, pc, o))
+                todo.push(r.get(k))
+                todo.push(pc)
+                todo.push(o)
+                todo.push(kind)
 
 bool tfOk = timeframe.isintraday or timeframe.isdaily
 
@@ -232,21 +237,31 @@ if barstate.islast
     for g in gaps
         f_gapDel(g)
     gaps.clear()
+    todo.clear()
     if tfOk
         if not na(raw)
             if raw.size() > 1
                 int nW    = int(raw.get(0))
                 int total = int((raw.size() - 1) / 3)
                 if showNwog
-                    f_drawList(raw, adj, 1, nW, nwogBase, italLbl ? "𝘕𝘞𝘖𝘎" : "NWOG", MS6H)
+                    f_collect(raw, adj, 1, nW, 0)
                 if showNdog
-                    f_drawList(raw, adj, 1 + nW * 3, total - nW, ndogBase, italLbl ? "𝘕𝘋𝘖𝘎" : "NDOG", MS6H)
+                    f_collect(raw, adj, 1 + nW * 3, total - nW, 1)
         if showOrg and not na(orgR)
-            f_drawList(orgR, orgA, 0, int(orgR.size() / 3), orgBase, italLbl ? "𝘖𝘙𝘎" : "ORG", 0)
+            f_collect(orgR, orgA, 0, int(orgR.size() / 3), 2)
+    int nTodo = int(todo.size() / 4)
+    if nTodo > 0
+        for i = 0 to nTodo - 1
+            int   t0   = int(todo.get(i * 4))
+            int   kind = int(todo.get(i * 4 + 3))
+            string nm  = kind == 0 ? (italLbl ? "𝘕𝘞𝘖𝘎" : "NWOG") : kind == 1 ? (italLbl ? "𝘕𝘋𝘖𝘎" : "NDOG") : (italLbl ? "𝘖𝘙𝘎" : "ORG")
+            color base = kind == 0 ? nwogBase : kind == 1 ? ndogBase : orgBase
+            // NDOG/NWOG are named for the trading day they open into (18:00 + 6 h).
+            string dt  = str.format_time(t0 + (kind == 2 ? 0 : MS6H), "d MMM", NY)
+            gaps.push(f_gapNew(base, nm + " · " + dt, t0, todo.get(i * 4 + 1), todo.get(i * 4 + 2)))
 
-// The compiler doesn't count drawings created inside nested function calls
-// as the indicator's output, so declare an invisible plot to satisfy it.
-plot(na, "", display = display.none, editable = false)
+// Draws nothing (na), but gives the indicator a plot so it always compiles.
+plot(na, "NDOG/NWOG", color = color(na), editable = false)
 
 // ═══════════════════════════ Guard warning ═══════════════════════════
 var table warnT = na
