@@ -1,0 +1,26 @@
+//@version=6
+indicator("Session Highlights (08:30-09:30 + ICT NY Lunch)", overlay = true)
+
+// ── 08:30-09:30 window ────────────────────────────────────────────────────
+showOpen    = input.bool(true, "Show 08:30-09:30", group = "08:30-09:30")
+openSession = input.session("0830-0930", "Window", group = "08:30-09:30")
+openTz      = input.string("America/New_York", "Time zone", group = "08:30-09:30",
+     options = ["America/New_York", "America/Chicago", "Europe/London", "UTC"])
+openColor   = input.color(color.new(color.red, 80), "Colour", group = "08:30-09:30")
+
+// ── ICT NY Lunch (always New York time) ───────────────────────────────────
+showLunch    = input.bool(true, "Show NY Lunch", group = "ICT NY Lunch")
+lunchSession = input.session("1200-1300", "Window (NY time)", group = "ICT NY Lunch")
+lunchColor   = input.color(color.new(color.gray, 80), "Colour", group = "ICT NY Lunch")
+
+// ── Logic ─────────────────────────────────────────────────────────────────
+// time() returns na when the bar is outside the session window (Mon-Fri only).
+inSession(string sess, string tz) =>
+    not na(time(timeframe.period, sess + ":23456", tz))
+
+inOpen  = showOpen  and inSession(openSession, openTz)
+inLunch = showLunch and inSession(lunchSession, "America/New_York")
+
+// Full-height vertical bands.
+bgcolor(inOpen  ? openColor  : na, title = "08:30-09:30 shade")
+bgcolor(inLunch ? lunchColor : na, title = "NY Lunch shade")
