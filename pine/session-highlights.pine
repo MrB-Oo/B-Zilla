@@ -1,5 +1,6 @@
 //@version=6
-indicator("Session Highlights (08:30-09:30 + ICT NY Lunch)", overlay = true)
+indicator("Session Highlights (08:30-09:30 + ICT NY Lunch + FuturesElite Fri cutoff)",
+     overlay = true, max_lines_count = 500)
 
 // ── 08:30-09:30 window ────────────────────────────────────────────────────
 showOpen    = input.bool(true, "Show 08:30-09:30", group = "08:30-09:30")
@@ -13,14 +14,39 @@ showLunch    = input.bool(true, "Show NY Lunch", group = "ICT NY Lunch")
 lunchSession = input.session("1200-1300", "Window (NY time)", group = "ICT NY Lunch")
 lunchColor   = input.color(color.new(color.gray, 80), "Colour", group = "ICT NY Lunch")
 
-// ── Logic ─────────────────────────────────────────────────────────────────
-// time() returns na when the bar is outside the session window (Mon-Fri only).
-inSession(string sess, string tz) =>
-    not na(time(timeframe.period, sess + ":23456", tz))
+// ── FuturesElite Friday cutoff (always New York time) ─────────────────────
+// FuturesElite FAQ: all trades must be closed before 4:59 PM EST; no weekend holds.
+showFe      = input.bool(true, "Show Friday cutoff", group = "FuturesElite Friday")
+feWarn      = input.session("1630-1659", "Warning window (NY time)", group = "FuturesElite Friday")
+feCutHour   = input.int(16, "Cutoff hour (NY)",   minval = 0, maxval = 23, group = "FuturesElite Friday")
+feCutMinute = input.int(59, "Cutoff minute (NY)", minval = 0, maxval = 59, group = "FuturesElite Friday")
+feColor     = input.color(color.new(color.orange, 70), "Warning colour", group = "FuturesElite Friday")
+feLineColor = input.color(color.red, "Cutoff line colour", group = "FuturesElite Friday")
 
-inOpen  = showOpen  and inSession(openSession, openTz)
-inLunch = showLunch and inSession(lunchSession, "America/New_York")
+// ── Logic ─────────────────────────────────────────────────────────────────
+NY = "America/New_York"
+
+// time() returns na when the bar is outside the session window.
+// days: 1 = Sun, 2 = Mon ... 6 = Fri, 7 = Sat
+inSession(string sess, string tz, string days) =>
+    not na(time(timeframe.period, sess + ":" + days, tz))
+
+inOpen  = showOpen  and inSession(openSession,  openTz, "23456")
+inLunch = showLunch and inSession(lunchSession, NY,     "23456")
+inFeWarn = showFe   and inSession(feWarn,       NY,     "6")
 
 // Full-height vertical bands.
-bgcolor(inOpen  ? openColor  : na, title = "08:30-09:30 shade")
-bgcolor(inLunch ? lunchColor : na, title = "NY Lunch shade")
+bgcolor(inOpen   ? openColor  : na, title = "08:30-09:30 shade")
+bgcolor(inLunch  ? lunchColor : na, title = "NY Lunch shade")
+bgcolor(inFeWarn ? feColor    : na, title = "FuturesElite Friday warning")
+
+// Vertical line at the exact Friday cutoff time (placed by time, so it lands
+// correctly even when the cutoff falls inside a bar on higher timeframes).
+var int lastFeDay = na
+isFriday = dayofweek(time, NY) == dayofweek.friday
+feDay    = dayofmonth(time, NY)
+if showFe and isFriday and feDay != lastFeDay and timeframe.isintraday
+    lastFeDay := feDay
+    cutTs = timestamp(NY, year(time, NY), month(time, NY), feDay, feCutHour, feCutMinute)
+    line.new(cutTs, low, cutTs, high, xloc = xloc.bar_time, extend = extend.both,
+         color = feLineColor, style = line.style_dashed, width = 2)
